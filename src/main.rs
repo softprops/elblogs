@@ -1,13 +1,13 @@
 use chrono::prelude::{DateTime, Utc};
 use flate2::read::GzDecoder;
 use futures::future::{self, Future};
+use recap::Recap;
 use rusoto_core::Region;
 use rusoto_s3::{GetObjectError, GetObjectRequest, ListObjectsV2Request, S3Client, S3};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::Error as IoError;
 use structopt::StructOpt;
 use tokio::io::read_to_end;
-use recap::Recap;
 
 #[derive(StructOpt)]
 struct ElbLogs {
@@ -33,10 +33,26 @@ impl From<IoError> for Error {
     }
 }
 
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Type {
+    Http,
+    Https,
+    H2,
+    Ws,
+    Wss,
+}
+
+impl Default for Type {
+    fn default() -> Self {
+        Type::Http
+    }
+}
+
 // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html#access-log-entry-format
 #[derive(Default, Debug, Deserialize, Recap)]
 #[recap(regex = r#"(?x)
-    (?P<request_type>[\S]+)
+    (?P<request_type>http|https|h2|ws|wss)
     \s
     (?P<timestamp>[\S]+)
     \s
@@ -60,9 +76,9 @@ impl From<IoError> for Error {
     \s
     (?P<sent_bytes>[\S]+)
     \s
-    "(?P<request>.*)"
+    "(?P<request>[^"]+)"
     \s
-    "(?P<user_agent>.*)"
+    "(?P<user_agent>[^"]*)"
     \s
     (?P<ssl_cipher>[\S]+)
     \s
@@ -70,11 +86,22 @@ impl From<IoError> for Error {
     \s
     (?P<target_group_arn>[\S]+)
     \s
-    "(?P<trace_id>[\S]+)"
+    "(?P<trace_id>[^"]+)"
     \s
-    "(?P<domain_name>[\S]+)"
+    "(?P<domain_name>[^"]+)"
     \s
-    "(?P<chosen_cert_arn>[\S]+)""#)]
+    "(?P<chosen_cert_arn>[^"]+)"
+    \s
+    (?P<matched_rule_priority>[\S]+)
+    \s
+    (?P<request_creation_time>[\S]+)
+    \s
+    "(?P<actions_executed>[^"]+)"
+    \s
+    "(?P<redirect_url>[^"]+)"
+    \s
+    "(?P<error_reason>[^"]+)"
+"#)]
 struct Request {
     request_type: String,
     timestamp: String,
@@ -96,11 +123,11 @@ struct Request {
     trace_id: String,
     domain_name: String,
     chosen_cert_arn: String,
-    //matched_rule_priority: String,
-    //request_creation_time: String,
-    //actions_executed: String,
-    //redirect_url: String,
-    //error_reason: String,
+    matched_rule_priority: u16,
+    request_creation_time: String,
+    actions_executed: String,
+    redirect_url: String,
+    error_reason: String,
 }
 
 impl Request {
@@ -116,12 +143,11 @@ impl Request {
 }
 
 #[derive(Deserialize, Recap)]
-#[recap(regex=r#"^(?P<bucket>[^/]+)/(?P<path>.*)"#)]
+#[recap(regex = r#"^(?P<bucket>[^/]+)/(?P<path>.*)"#)]
 struct BucketPath {
     bucket: String,
-    path: String
+    path: String,
 }
-
 
 fn main() {
     let ElbLogs { bucket_path } = ElbLogs::from_args();
@@ -210,3 +236,13 @@ fn main() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+    #[test]
+    fn deserialize_types() -> Result<(), Box<dyn Error>> {
+        assert_eq!(serde_json::from_str::<Type>(r#""https""#)?, Type::Https);
+        Ok(())
+    }
+}
