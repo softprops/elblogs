@@ -2,7 +2,7 @@ use chrono::prelude::{DateTime, Utc};
 use flate2::read::GzDecoder;
 use futures::future::{self, Future};
 use recap::Recap;
-use rusoto_core::Region;
+use rusoto_core::{Region, RusotoError};
 use rusoto_s3::{GetObjectError, GetObjectRequest, ListObjectsV2Request, S3Client, S3};
 use serde::{Deserialize, Serialize};
 use std::io::Error as IoError;
@@ -12,17 +12,17 @@ use tokio::io::read_to_end;
 #[derive(StructOpt)]
 struct ElbLogs {
     /// full bucket path including bucket until region
-    bucket_path: String,
+    bucket_path: BucketPath,
 }
 
 #[derive(Debug)]
 enum Error {
-    Get(GetObjectError),
+    Get(RusotoError<GetObjectError>),
     Io(IoError),
 }
 
-impl From<GetObjectError> for Error {
-    fn from(err: GetObjectError) -> Self {
+impl From<RusotoError<GetObjectError>> for Error {
+    fn from(err: RusotoError<GetObjectError>) -> Self {
         Error::Get(err)
     }
 }
@@ -153,7 +153,7 @@ fn main() {
     let ElbLogs { bucket_path } = ElbLogs::from_args();
     let region = Region::default();
     let s3 = S3Client::new(region);
-    let BucketPath { bucket, path } = bucket_path.parse().unwrap();
+    let BucketPath { bucket, path } = bucket_path;
     let now = Utc::now();
     let until = now - chrono::Duration::minutes(15);
     let after = now - chrono::Duration::minutes(20);
